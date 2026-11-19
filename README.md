@@ -60,12 +60,15 @@ in its connection settings, or in its SQL).
 
 ## An existing database
 
-The history tables, the view, the schema `camel_history` and the history version tables of the shared cluster's Postgres were dropped, so
-those migrations can be applied. **The event store was not**: the cluster still has `public.conversation_events` (emptied), its trigger,
-the publication and slot `conversation_events`, the connector bound to them, and the version table `agent_conversation_schema_migrations` at
-version 2. `make migrations/up` would then create a second, empty event store in `event_store` and fail to create the publication, which
-already exists. Move it in this order: stop the connector, drop the old publication and slot and `public.conversation_events` with the old
-version table, `make migrations/up`, then give the connector the settings above and start it.
+These migrations are meant for a database that has none of the old objects. **The local cluster was recreated from zero** (`clean.sh` in the
+`cluster` repo) and the migrations were applied from version 1: all three folders were applied (`agent/conversation` at 4,
+`history/camel_conversation` at 5, `history/conversation` at 4), and nothing but the version tables is in `public`.
+
+A database that still has the **old layout** (the tables and the view in `public`, `public.conversation_events` with its trigger, the publication and
+slot `conversation_events`, the old connector, and the old version tables) cannot take them: `up` would not create the new schemas, because the
+version tables say the work is done, and it would fail to create the publication, which already exists. Move it in this order: stop and delete
+the old connector, drop its slot, the old publication, `public.conversation_events` and the old tables and version tables, then
+`make migrations/up`, then register the connector with the settings above.
 
 ## Run
 
