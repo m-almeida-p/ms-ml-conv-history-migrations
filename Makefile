@@ -93,6 +93,12 @@ migrations/version: migrations/check
 migrations/test: migrations/check
 	@./scripts/check-migrations.sh
 
+## database/create: create the database DATABASE on the target Postgres when it is missing (the migrations create tables, not databases)
+.PHONY: database/create
+database/create:
+	@test -n "$(DATABASE)" || { echo "Error: name it: make database/create DATABASE=agentwebui"; exit 1; }
+	@./scripts/create-database.sh "$(DATABASE)"
+
 ## migrations/new: create the next numbered migration, SERVICE=<agent|history|shared> FLOW=<flow> NAME=<snake_case>
 .PHONY: migrations/new
 migrations/new: migrations/check

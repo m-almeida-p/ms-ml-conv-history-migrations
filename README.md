@@ -135,12 +135,20 @@ make migrations/version              # the recorded version of each folder
 make migrations/down FLOW=camel_conversation CONFIRM=yes   # drops that folder's tables and rows
 make migrations/new FLOW=camel_conversation NAME=add_something   # the next numbered pair
 make migrations/test                 # the idempotency check, on a throwaway Postgres in Docker
+make database/create DATABASE=agentwebui   # a database of its own, when it is missing (see below)
 ```
 
 - **Target:** the shared cluster's Postgres, `postgres://postgres@localhost:5432/postgres?sslmode=disable`. Another database:
   `make migrations/up MIGRATIONS_DB_DSN=postgres://...` (nothing is read from `.env`).
 - **`SERVICE` and `FLOW`:** each is `all` (default) or a folder name. `up`, `down` and `version` accept `all`; `goto`, `force` and `new`
   need one service and one flow. `down` runs backwards.
+- **A database of its own:** the migrations create schemas and tables, never a database. A service that keeps its tables in a database of
+  its own needs `make database/create DATABASE=<name>` first (`scripts/create-database.sh`): it creates it when it is missing and says
+  so when it is there, and the name is lower-case letters, digits and `_`. It reaches the server through `psql` when that is installed, or
+  through `docker exec` in `yape-postgres` (the cluster's Postgres; `PG_CONTAINER` names another container). The Agent Web UI uses
+  `agentwebui`: `make database/create DATABASE=agentwebui` and then
+  `make migrations/up SERVICE=web_ui MIGRATIONS_DB_DSN='postgres://postgres@localhost:5432/agentwebui?sslmode=disable'`. (`up` with
+  the default `SERVICE=all` on the shared `postgres` database also creates the empty schema `web_ui` there, which nothing uses.)
 - **Existing tables:** every statement is `IF NOT EXISTS`, so `up` also works on a database that already has the tables: it keeps the
   rows and records the version.
 - **Limit of `IF NOT EXISTS`:** it makes `up` safe to repeat but cannot change a table that already exists. Editing a `CREATE TABLE`

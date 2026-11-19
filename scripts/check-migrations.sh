@@ -166,6 +166,17 @@ wu_refused "a second message at the same position of a conversation" \
   "insert into web_ui.messages (id, conversation_id, seq, role, status) values ('00000000-0000-0000-0000-0000000000a3', '00000000-0000-0000-0000-0000000000c1', 1, 'assistant', 'complete')"
 if [[ "$(wu "delete from web_ui.users where id = '00000000-0000-0000-0000-000000000001'; select (select count(*) from web_ui.sessions) + (select count(*) from web_ui.conversations) + (select count(*) from web_ui.messages)")" == "0" ]]; then pass "web_ui: deleting a user removes its sessions, conversations and messages"; else fail "web_ui: deleting a user left rows behind"; fi
 
+# The script that creates a database the folders can be applied to (the web UI keeps its tables in a database of its own).
+# PG_CONTAINER makes it use docker exec in the throwaway container, so the result does not depend on psql being installed.
+createdb() { PG_CONTAINER="${NAME}" MIGRATIONS_DB_DSN="postgres://postgres@localhost/postgres" ./scripts/create-database.sh "$1"; }
+if [[ "$(createdb chk_created 2>&1)" == "Created the database chk_created." && "$(psql_db postgres <<< "select count(*) from pg_database where datname = 'chk_created'")" == "1" ]]; then pass "create-database: a missing database is created"; else fail "create-database: a missing database was not created"; fi
+if [[ "$(createdb chk_created 2>&1)" == "The database chk_created already exists." ]]; then pass "create-database: a database that is there is left alone and said so"; else fail "create-database: a second run did not say the database exists"; fi
+if createdb 'Bad;name' >/dev/null 2>&1 || createdb 'x; drop database postgres' >/dev/null 2>&1; then fail "create-database: a name that is not plain was accepted"; else pass "create-database: a name that is not plain is refused"; fi
+if createdb "" >/dev/null 2>&1; then fail "create-database: no name was accepted"; else pass "create-database: no name is refused"; fi
+# The folders go into a database made by it, which is how the web UI is set up.
+if MIGRATIONS_DB_DSN="postgres://postgres:x@127.0.0.1:${port}/chk_created?sslmode=disable" ./scripts/migrate.sh web_ui chat up >/dev/null 2>&1 \
+  && [[ "$(psql_db chk_created <<< "select count(*) from information_schema.tables where table_schema = 'web_ui'")" == "4" ]]; then pass "create-database: web_ui/chat applies to the database it made (4 tables)"; else fail "create-database: web_ui/chat did not apply to the database it made"; fi
+
 # A database can record a version above the folder's latest migration (a migration
 # that no longer exists was applied). up must reset it to the latest instead of
 # stopping with "no migration found for version N", and must not touch the tables.
