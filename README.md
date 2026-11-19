@@ -136,6 +136,7 @@ make migrations/down FLOW=camel_conversation CONFIRM=yes   # drops that folder's
 make migrations/new FLOW=camel_conversation NAME=add_something   # the next numbered pair
 make migrations/test                 # the idempotency check, on a throwaway Postgres in Docker
 make database/create DATABASE=agentwebui   # a database of its own, when it is missing (see below)
+make web-ui/setup                    # the Agent Web UI: its database, its tables, and the DB_URL it needs
 ```
 
 - **Target:** the shared cluster's Postgres, `postgres://postgres@localhost:5432/postgres?sslmode=disable`. Another database:
@@ -146,9 +147,8 @@ make database/create DATABASE=agentwebui   # a database of its own, when it is m
   its own needs `make database/create DATABASE=<name>` first (`scripts/create-database.sh`): it creates it when it is missing and says
   so when it is there, and the name is lower-case letters, digits and `_`. It reaches the server through `psql` when that is installed, or
   through `docker exec` in `yape-postgres` (the cluster's Postgres; `PG_CONTAINER` names another container). The Agent Web UI uses
-  `agentwebui`: `make database/create DATABASE=agentwebui` and then
-  `make migrations/up SERVICE=web_ui MIGRATIONS_DB_DSN='postgres://postgres@localhost:5432/agentwebui?sslmode=disable'`. (`up` with
-  the default `SERVICE=all` on the shared `postgres` database also creates the empty schema `web_ui` there, which nothing uses.)
+  `agentwebui`: [`make web-ui/setup`](#the-agent-web-ui-iape-ui) does it. (`up` with the default `SERVICE=all` on the shared `postgres`
+  database also creates the empty schema `web_ui` there, which nothing uses.)
 - **Existing tables:** every statement is `IF NOT EXISTS`, so `up` also works on a database that already has the tables: it keeps the
   rows and records the version.
 - **Limit of `IF NOT EXISTS`:** it makes `up` safe to repeat but cannot change a table that already exists. Editing a `CREATE TABLE`
@@ -165,6 +165,30 @@ On a throwaway Postgres in Docker (the cluster is not touched). For each folder:
 identical (tables, columns, constraints, indexes, comments); `down` runs twice and leaves no table; `up` after `down` gives the same
 schema. Through `migrate`: a second `up` says `no change`; `up` over existing tables without version tables changes nothing; a recorded
 version above the latest migration is reset without touching the tables; a dirty version is not reset silently. After `up`, nothing exists in `public` but the version tables, the four schemas exist, the publication covers only the event store table and an `UPDATE` of it is refused; after `down`, the publication and the schemas are gone. For the dead-letter table it also checks what a consumer relies on: a minimal row is accepted and starts `open` on attempt 1; the same source record twice is refused, and `ON CONFLICT DO NOTHING` makes the retry harmless; another service may dead-letter the same record; a negative offset, a status outside the three, an open row with a resolution time and a resolved row without one are all refused; and a record with a NUL and bytes that are not UTF-8 comes back byte for byte. A new folder is covered without editing the script. Last run: all 54 checks passed.
+
+## The Agent Web UI (iApe-UI)
+
+`iApe-UI` (the web UI for an agent) creates no table and knows nothing of these migrations: it expects its
+tables in the schema `web_ui` of the database its `DB_URL` points to, and stops at start when they are not there. They are defined
+here, in `migrations/web_ui/chat/`: `users`, `sessions`, `conversations` and `messages`, with the version table
+`web_ui_chat_schema_migrations` in `public`. It keeps them in a database of its own, `agentwebui`, not in the shared `postgres`.
+
+```bash
+make web-ui/setup                    # create agentwebui when it is missing, apply web_ui/chat to it, print the DB_URL
+make web-ui/setup WEB_UI_DATABASE=other_name       # another database name
+make web-ui/setup MIGRATIONS_DB_DSN=postgres://user:password@host:5432/postgres?sslmode=disable   # another server
+```
+
+It prints the `DB_URL` for the web UI's settings, for example (the cluster's Postgres trusts local connections, so no password):
+
+```
+DB_URL="postgres://postgres@localhost:5432/agentwebui?sslmode=disable&search_path=web_ui"
+```
+
+`search_path=web_ui` is how the web UI finds its tables, because every name here is qualified with the schema and the web UI's queries
+are not. Running `make web-ui/setup` again changes nothing, and it is also what to run after a new migration is added to the folder:
+the web UI never changes its tables itself. The web UI's integration tests build the same tables from a copy of the two `up` files
+(`it/internal/pgenv/schema.sql` in that repository): refresh the copy when the folder changes.
 
 ## Adding a table
 

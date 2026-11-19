@@ -22,6 +22,7 @@
 
 SERVICE ?= all
 FLOW ?= all
+WEB_UI_DATABASE ?= agentwebui
 MIGRATIONS_ROOT ?= ./migrations
 ifeq ($(strip $(MIGRATIONS_DB_DSN)),)
 # The shared cluster's Postgres (trust auth, no password).
@@ -98,6 +99,11 @@ migrations/test: migrations/check
 database/create:
 	@test -n "$(DATABASE)" || { echo "Error: name it: make database/create DATABASE=agentwebui"; exit 1; }
 	@./scripts/create-database.sh "$(DATABASE)"
+
+## web-ui/setup: the Agent Web UI's database (WEB_UI_DATABASE, default agentwebui): create it when missing, apply web_ui/chat, print its DB_URL
+.PHONY: web-ui/setup
+web-ui/setup: migrations/check
+	@WEB_UI_DATABASE="$(WEB_UI_DATABASE)" ./scripts/setup-web-ui.sh
 
 ## migrations/new: create the next numbered migration, SERVICE=<agent|history|shared> FLOW=<flow> NAME=<snake_case>
 .PHONY: migrations/new

@@ -177,6 +177,13 @@ if createdb "" >/dev/null 2>&1; then fail "create-database: no name was accepted
 if MIGRATIONS_DB_DSN="postgres://postgres:x@127.0.0.1:${port}/chk_created?sslmode=disable" ./scripts/migrate.sh web_ui chat up >/dev/null 2>&1 \
   && [[ "$(psql_db chk_created <<< "select count(*) from information_schema.tables where table_schema = 'web_ui'")" == "4" ]]; then pass "create-database: web_ui/chat applies to the database it made (4 tables)"; else fail "create-database: web_ui/chat did not apply to the database it made"; fi
 
+# The one command that sets up the web UI: database, tables, and the DB_URL it prints (no password, with the schema).
+setup_out="$(MIGRATIONS_DB_DSN="postgres://postgres:x@127.0.0.1:${port}/postgres?sslmode=disable" PG_CONTAINER="${NAME}" WEB_UI_DATABASE=chk_webui ./scripts/setup-web-ui.sh 2>&1)" || setup_out="FAILED"
+if [[ "${setup_out}" != "FAILED" && "$(psql_db chk_webui <<< "select count(*) from information_schema.tables where table_schema = 'web_ui'")" == "4" ]]; then pass "web-ui/setup: creates the database and its 4 tables"; else fail "web-ui/setup: did not create the database and its tables"; fi
+if grep -qF 'DB_URL="postgres://postgres@127.0.0.1:' <<< "${setup_out}" && grep -qF 'search_path=web_ui"' <<< "${setup_out}" && ! grep -qF ':x@' <<< "${setup_out}"; then pass "web-ui/setup: prints a DB_URL with the schema and without the password"; else fail "web-ui/setup: the DB_URL it prints is wrong"; fi
+setup_again="$(MIGRATIONS_DB_DSN="postgres://postgres:x@127.0.0.1:${port}/postgres?sslmode=disable" PG_CONTAINER="${NAME}" WEB_UI_DATABASE=chk_webui ./scripts/setup-web-ui.sh 2>&1 || true)"
+if grep -qF 'no change' <<< "${setup_again}"; then pass "web-ui/setup: a second run changes nothing"; else fail "web-ui/setup: a second run changed something"; fi
+
 # A database can record a version above the folder's latest migration (a migration
 # that no longer exists was applied). up must reset it to the latest instead of
 # stopping with "no migration found for version N", and must not touch the tables.
