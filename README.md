@@ -30,6 +30,7 @@ so the folders evolve apart in the same database.
 | `migrations/agent/conversation/` | `event_store` | `conversation_events` (the append-only log) with its two indexes and its trigger, and the publication `conversation_events` | `ms-ml-genai-agents-bs` (writes it), Debezium (reads it) | `agent_conversation_schema_migrations` |
 | `migrations/history/conversation/` | `history` | `conversation_inbox`, `conversation_messages`, `conversation_summaries`, the view `conversation_flow_segments` | `ms-ml-conv-history-bs` (the Go service) | `history_conversation_schema_migrations` |
 | `migrations/history/camel_conversation/` | `camel_history` | the same three tables, and the two maps to Microsoft Foundry (`foundry_conversation_map`, `foundry_item_map`) | `ms-ml-camel-conv-history-bs` | `history_camel_conversation_schema_migrations` |
+| `migrations/shared/dead_letter/` | `dead_letter` | `dead_letters`: the records every consumer refused for good, kept as received | every consumer (see [Dead letters](#dead-letters)) | `shared_dead_letter_schema_migrations` |
 
 The tables have the same names in both schemas: the schema tells them apart (`history.conversation_inbox`,
 `camel_history.conversation_inbox`), so no table name carries a prefix. Each folder's first migration creates its schema, and `down`
@@ -61,7 +62,7 @@ in its connection settings, or in its SQL).
 ## An existing database
 
 These migrations are meant for a database that has none of the old objects. **The local cluster was recreated from zero** (`clean.sh` in the
-`cluster` repo) and the migrations were applied from version 1: all three folders were applied (`agent/conversation` at 4,
+`cluster` repo) and the migrations were applied from version 1: all folders were applied (`agent/conversation` at 4,
 `history/camel_conversation` at 5, `history/conversation` at 4), and nothing but the version tables is in `public`.
 
 A database that still has the **old layout** (the tables and the view in `public`, `public.conversation_events` with its trigger, the publication and
@@ -69,6 +70,58 @@ slot `conversation_events`, the old connector, and the old version tables) canno
 version tables say the work is done, and it would fail to create the publication, which already exists. Move it in this order: stop and delete
 the old connector, drop its slot, the old publication, `public.conversation_events` and the old tables and version tables, then
 `make migrations/up`, then register the connector with the settings above.
+
+## Dead letters
+
+`dead_letter.dead_letters` is where a consumer puts a record it **refused for good**, instead of a line in a log. No service owns it, so
+the folder is `shared/`. It holds one row per source record and service.
+
+| Column | What it is |
+|---|---|
+| `service`, `source_topic`, `source_partition`, `source_offset` | Who dead-lettered it and where the record is in Kafka. **Unique together**, so a retried insert changes nothing |
+| `record_key`, `record_value`, `headers` | The record exactly as Kafka delivered it, as `bytea` (a NUL or a byte that is not UTF-8 is often why it was refused, and a replay must publish the same bytes) |
+| `reason`, `field`, `detail`, `exception_class`, `attempt` | Why, in the consumer's own words (`schema-violation`, `store-rejected` with `sqlstate-22021`, `unexpected`, ...) and how many tries it took. `reason` is an open list: a new consumer may add its own |
+| `status`, `failed_at`, `resolved_at`, `resolution_note` | `open`, `replayed` or `discarded`. A row is resolved exactly when it is not open, and the database enforces that |
+
+**What goes in, and what does not.** Poison records (they break the contract, cannot be decoded, or the store refuses the data) and
+unexpected errors that were retried and still failed. A failure that is not the record's fault (the database or the registry is down) is
+retried in place and never lands here.
+
+**How a consumer writes it.** In the dead-letter route, in the same step that today writes the log line, then commits the offset (the
+Kamelet does that when the route returns):
+
+```sql
+INSERT INTO dead_letter.dead_letters
+    (service, source_topic, source_partition, source_offset, source_timestamp, record_key, record_value, headers,
+     reason, field, detail, exception_class, attempt)
+VALUES (:service, :topic, :partition, :offset, :timestamp, :key, :value, :headers::jsonb,
+        :reason, :field, :detail, :exceptionClass, :attempt)
+ON CONFLICT (service, source_topic, source_partition, source_offset) DO NOTHING;
+```
+
+If the insert fails, the route throws and the record is read again, so a record is never lost. `ON CONFLICT DO NOTHING` makes the retry
+harmless. The consumer's decoder must keep the **original bytes** of the key and the value (today it keeps text), or a replay cannot be exact.
+
+**What is still to do.** This repo defines and tests the table, and it is applied to the local cluster. **No consumer writes to it yet**: their dead-letter route still writes a log line.
+
+**Replay.** Read the open rows of one service, publish `record_key` and `record_value` to `source_topic`, then mark them:
+
+```sql
+SELECT id, source_topic, record_key, record_value FROM dead_letter.dead_letters
+WHERE service = 'ms-ml-conv-history-consumer' AND status = 'open' ORDER BY failed_at;
+
+UPDATE dead_letter.dead_letters
+SET status = 'replayed', resolved_at = now(), resolution_note = 'fixed in the decoder, republished'
+WHERE id = ANY (:ids);
+```
+
+**Retention and access.** The value is the original record, so it can carry chat text and an account id: **give the table the same access
+and the same retention rules as the event store.** Nothing purges it. A job (not a migration) can delete the old resolved rows, which the
+partial index on `resolved_at` serves:
+
+```sql
+DELETE FROM dead_letter.dead_letters WHERE resolved_at < now() - interval '30 days';
+```
 
 ## Run
 
@@ -102,7 +155,7 @@ make migrations/test                 # the idempotency check, on a throwaway Pos
 On a throwaway Postgres in Docker (the cluster is not touched). For each folder: a second `up` fails nothing and leaves the schema
 identical (tables, columns, constraints, indexes, comments); `down` runs twice and leaves no table; `up` after `down` gives the same
 schema. Through `migrate`: a second `up` says `no change`; `up` over existing tables without version tables changes nothing; a recorded
-version above the latest migration is reset without touching the tables; a dirty version is not reset silently. After `up`, nothing exists in `public` but the version tables, the three schemas exist, the publication covers only the event store table and an `UPDATE` of it is refused; after `down`, the publication and the schemas are gone. A new folder is covered without editing the script. Last run: all 35 checks passed.
+version above the latest migration is reset without touching the tables; a dirty version is not reset silently. After `up`, nothing exists in `public` but the version tables, the four schemas exist, the publication covers only the event store table and an `UPDATE` of it is refused; after `down`, the publication and the schemas are gone. For the dead-letter table it also checks what a consumer relies on: a minimal row is accepted and starts `open` on attempt 1; the same source record twice is refused, and `ON CONFLICT DO NOTHING` makes the retry harmless; another service may dead-letter the same record; a negative offset, a status outside the three, an open row with a resolution time and a resolved row without one are all refused; and a record with a NUL and bytes that are not UTF-8 comes back byte for byte. A new folder is covered without editing the script. Last run: all 54 checks passed.
 
 ## Adding a table
 

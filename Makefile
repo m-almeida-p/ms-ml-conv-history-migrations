@@ -8,12 +8,13 @@
 #                                           conversation_summaries, the view conversation_flow_segments
 #   migrations/history/camel_conversation/  schema camel_history: the same three tables, and the two maps
 #                                           to Microsoft Foundry
+#   migrations/shared/dead_letter/          schema dead_letter: dead_letters, the records every consumer refused for good
 #
 # Nothing is created in public except golang-migrate's own version tables. The first migration of each folder
 # creates its schema; every later one qualifies its names with it.
 #
 # Each folder records its version in its own table, <service>_<flow>_schema_migrations,
-# so they evolve apart in one database. SERVICE (agent, history) and FLOW (conversation,
+# so they evolve apart in one database. SERVICE (agent, history, shared) and FLOW (conversation,
 # camel_conversation) pick folders; both default to all.
 # No environment file is read: the target defaults to the shared cluster's Postgres
 # and is overridden on the command line, `make migrations/up MIGRATIONS_DB_DSN=postgres://...`.
@@ -57,13 +58,13 @@ migrations/debug:
 	@echo "MIGRATIONS_ROOT:   $(MIGRATIONS_ROOT)"
 	@echo "MIGRATIONS_DB_DSN: $(MASKED_DSN)"
 
-## migrations/up: apply every pending migration (agent first, then history; flows in name order)
+## migrations/up: apply every pending migration (agent, history, then shared; flows in name order)
 .PHONY: migrations/up
 migrations/up: migrations/check
 	@echo "Applying migrations to $(MASKED_DSN)"
 	@$(RUN_MIGRATE) up
 
-## migrations/down: revert the selected migrations (drops their tables, history first); needs CONFIRM=yes
+## migrations/down: revert the selected migrations (drops their tables, shared first); needs CONFIRM=yes
 .PHONY: migrations/down
 migrations/down: migrations/check
 	@test "$(CONFIRM)" = "yes" || { echo "This drops the tables of SERVICE=$(SERVICE) FLOW=$(FLOW) with all their rows. Re-run with CONFIRM=yes"; exit 1; }
@@ -91,7 +92,7 @@ migrations/version: migrations/check
 migrations/test: migrations/check
 	@./scripts/check-migrations.sh
 
-## migrations/new: create the next numbered migration, SERVICE=<agent|history> FLOW=<flow> NAME=<snake_case>
+## migrations/new: create the next numbered migration, SERVICE=<agent|history|shared> FLOW=<flow> NAME=<snake_case>
 .PHONY: migrations/new
 migrations/new: migrations/check
 	@test -n "$(NAME)" || { echo "Error: set NAME=<snake_case_name>"; exit 1; }

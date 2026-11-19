@@ -8,8 +8,8 @@
 # from 000001, so each keeps its applied version in its own table,
 # <service>_<flow>_schema_migrations, and the folders evolve apart in one database.
 #
-# `all` is allowed for up, down and version. Down runs backwards: history before
-# agent, and the flows of a service in reverse order. goto, force and new need one
+# `all` is allowed for up, down and version. Down runs backwards: shared, then history,
+# then agent, and the flows of a service in reverse order. goto, force and new need one
 # service and one flow.
 # Settings come from the environment (the Makefile passes them):
 #   MIGRATIONS_ROOT, MIGRATIONS_DB_DSN, MIGRATE
@@ -19,8 +19,8 @@ ROOT="${MIGRATIONS_ROOT:-./migrations}"
 DSN="${MIGRATIONS_DB_DSN:-postgres://postgres@localhost:5432/postgres?sslmode=disable}"
 MIGRATE="${MIGRATE:-migrate}"
 
-# Order matters for up: the event store (agent) first, then the history built from it.
-SERVICES=(agent history)
+# Order matters for up: the event store (agent) first, then the history built from it, then what every consumer shares.
+SERVICES=(agent history shared)
 
 die() { echo "Error: $*" >&2; exit 1; }
 

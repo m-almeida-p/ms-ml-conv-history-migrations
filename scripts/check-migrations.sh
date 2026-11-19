@@ -97,7 +97,7 @@ if [[ "$(psql_db chk_migrate <<< "select count(*) from information_schema.tables
 else
   fail "migrate: something was created in public"
 fi
-for schema in event_store history camel_history; do
+for schema in event_store history camel_history dead_letter; do
   if [[ "$(psql_db chk_migrate <<< "select count(*) from information_schema.schemata where schema_name = '${schema}'")" == "1" ]]; then pass "migrate: schema ${schema} exists after up"; else fail "migrate: schema ${schema} is missing after up"; fi
 done
 second="$(./scripts/migrate.sh all all up 2>&1 || true)"
@@ -116,6 +116,33 @@ if [[ "$(psql_db chk_migrate <<< "select count(*) from pg_publication_tables whe
 if [[ "$(psql_db chk_migrate <<< "select count(*) from pg_publication_tables where pubname = 'conversation_events'")" == "1" ]]; then pass "migrate: the publication covers that table only"; else fail "migrate: the publication covers other tables"; fi
 # The append-only trigger is a statement trigger, so it refuses an UPDATE even when the table has no row to change.
 if psql_db chk_migrate <<< "update event_store.conversation_events set flow = 'x'" >/dev/null 2>&1; then fail "migrate: an UPDATE of the event store was accepted"; else pass "migrate: an UPDATE of the event store is refused (append-only)"; fi
+# The shared dead-letter table: what a consumer relies on when it writes a refused record.
+dl() { psql_db chk_migrate <<< "$1" 2>/dev/null; }
+dl_ok() { if dl "$2" >/dev/null; then pass "dead_letter: $1"; else fail "dead_letter: $1"; fi; }
+dl_refused() { if dl "$2" >/dev/null; then fail "dead_letter: $1 was accepted"; else pass "dead_letter: $1"; fi; }
+dl_ok "a row with only what a consumer always knows is accepted" \
+  "insert into dead_letter.dead_letters (service, source_topic, source_partition, source_offset, reason) values ('svc-a', 'topic-1', 0, 10, 'json')"
+if [[ "$(dl "select status || ',' || attempt || ',' || (resolved_at is null) from dead_letter.dead_letters where service = 'svc-a'")" == "open,1,true" ]]; then pass "dead_letter: a new row is open, on attempt 1, unresolved"; else fail "dead_letter: the defaults are wrong"; fi
+dl_refused "the same source record twice for the same service" \
+  "insert into dead_letter.dead_letters (service, source_topic, source_partition, source_offset, reason) values ('svc-a', 'topic-1', 0, 10, 'json')"
+if [[ "$(dl "with ins as (insert into dead_letter.dead_letters (service, source_topic, source_partition, source_offset, reason) values ('svc-a', 'topic-1', 0, 10, 'json') on conflict do nothing returning 1) select count(*) from ins")" == "0" ]]; then pass "dead_letter: ON CONFLICT DO NOTHING makes a retried insert harmless"; else fail "dead_letter: a retried insert added a row"; fi
+dl_ok "another service may dead-letter the same source record" \
+  "insert into dead_letter.dead_letters (service, source_topic, source_partition, source_offset, reason) values ('svc-b', 'topic-1', 0, 10, 'json')"
+dl_refused "a negative offset" \
+  "insert into dead_letter.dead_letters (service, source_topic, source_partition, source_offset, reason) values ('svc-a', 'topic-1', 0, -1, 'json')"
+dl_refused "a status outside open, replayed and discarded" \
+  "insert into dead_letter.dead_letters (service, source_topic, source_partition, source_offset, reason, status, resolved_at) values ('svc-a', 'topic-1', 0, 11, 'json', 'bogus', now())"
+dl_refused "an open row that has a resolution time" \
+  "insert into dead_letter.dead_letters (service, source_topic, source_partition, source_offset, reason, resolved_at) values ('svc-a', 'topic-1', 0, 12, 'json', now())"
+dl_refused "a replayed row with no resolution time" \
+  "insert into dead_letter.dead_letters (service, source_topic, source_partition, source_offset, reason, status) values ('svc-a', 'topic-1', 0, 13, 'json', 'replayed')"
+dl_ok "a row is resolved by setting the status and the time together" \
+  "update dead_letter.dead_letters set status = 'replayed', resolved_at = now(), resolution_note = 'republished' where service = 'svc-a' and source_offset = 10"
+# The record is kept as bytes: a NUL, a byte that is not UTF-8 and a Schema Registry header must come back exactly as they went in.
+dl_ok "a record with a NUL and bytes that are not UTF-8 is accepted" \
+  "insert into dead_letter.dead_letters (service, source_topic, source_partition, source_offset, reason, record_key, record_value, headers, field, detail, exception_class, attempt, source_timestamp) values ('svc-a', 'topic-1', 1, 20, 'store-rejected', '\\x7b226b223a317d'::bytea, '\\x0000000002007bff0a80'::bytea, '{\"h\":\"v\"}', 'sqlstate-22021', 'the store refuses the data for good', null, 3, now())"
+if [[ "$(dl "select encode(record_value, 'hex') || ',' || encode(record_key, 'hex') || ',' || (headers ->> 'h') from dead_letter.dead_letters where source_offset = 20")" == "0000000002007bff0a80,7b226b223a317d,v" ]]; then pass "dead_letter: key, value and headers come back byte for byte"; else fail "dead_letter: the record did not come back as it went in"; fi
+
 # A database can record a version above the folder's latest migration (a migration
 # that no longer exists was applied). up must reset it to the latest instead of
 # stopping with "no migration found for version N", and must not touch the tables.
@@ -132,7 +159,7 @@ latest_history="$(find "${ROOT}/history/conversation" -name '*.up.sql' | sed 's|
 psql_db chk_migrate <<< "update history_conversation_schema_migrations set version = ${latest_history}, dirty = false"
 
 if ./scripts/migrate.sh all all down >/dev/null 2>&1 && [[ "$(tables_of chk_migrate)" == "0" ]]; then pass "migrate: down leaves no table"; else fail "migrate: down"; fi
-if [[ "$(psql_db chk_migrate <<< "select (select count(*) from pg_publication) + (select count(*) from information_schema.schemata where schema_name in ('event_store', 'history', 'camel_history'))")" == "0" ]]; then pass "migrate: down also drops the publication and the three schemas"; else fail "migrate: down left the publication or a schema"; fi
+if [[ "$(psql_db chk_migrate <<< "select (select count(*) from pg_publication) + (select count(*) from information_schema.schemata where schema_name in ('event_store', 'history', 'camel_history', 'dead_letter'))")" == "0" ]]; then pass "migrate: down also drops the publication and the four schemas"; else fail "migrate: down left the publication or a schema"; fi
 
 echo
 if [[ ${failures} -eq 0 ]]; then echo "All migration checks passed."; else echo "${failures} check(s) failed."; exit 1; fi
