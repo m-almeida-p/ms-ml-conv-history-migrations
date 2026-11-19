@@ -97,7 +97,7 @@ if [[ "$(psql_db chk_migrate <<< "select count(*) from information_schema.tables
 else
   fail "migrate: something was created in public"
 fi
-for schema in history camel_history; do
+for schema in event_store history camel_history; do
   if [[ "$(psql_db chk_migrate <<< "select count(*) from information_schema.schemata where schema_name = '${schema}'")" == "1" ]]; then pass "migrate: schema ${schema} exists after up"; else fail "migrate: schema ${schema} is missing after up"; fi
 done
 second="$(./scripts/migrate.sh all all up 2>&1 || true)"
@@ -111,6 +111,11 @@ psql_db chk_migrate <<< "select 'drop table ' || quote_ident(table_name) || ';' 
 if ./scripts/migrate.sh all all up >/dev/null 2>&1; then pass "migrate: up over existing tables without version tables"; else fail "migrate: up over existing tables without version tables"; fi
 if [[ "$(dump_schema chk_migrate)" == "${all_first}" ]]; then pass "migrate: schema unchanged by that up"; else fail "migrate: schema changed by that up"; fi
 
+# The publication Debezium reads covers exactly the event store table, and the trigger that makes it append-only is there.
+if [[ "$(psql_db chk_migrate <<< "select count(*) from pg_publication_tables where pubname = 'conversation_events' and schemaname = 'event_store' and tablename = 'conversation_events'")" == "1" ]]; then pass "migrate: the publication conversation_events covers event_store.conversation_events"; else fail "migrate: the publication does not cover event_store.conversation_events"; fi
+if [[ "$(psql_db chk_migrate <<< "select count(*) from pg_publication_tables where pubname = 'conversation_events'")" == "1" ]]; then pass "migrate: the publication covers that table only"; else fail "migrate: the publication covers other tables"; fi
+# The append-only trigger is a statement trigger, so it refuses an UPDATE even when the table has no row to change.
+if psql_db chk_migrate <<< "update event_store.conversation_events set flow = 'x'" >/dev/null 2>&1; then fail "migrate: an UPDATE of the event store was accepted"; else pass "migrate: an UPDATE of the event store is refused (append-only)"; fi
 # A database can record a version above the folder's latest migration (a migration
 # that no longer exists was applied). up must reset it to the latest instead of
 # stopping with "no migration found for version N", and must not touch the tables.
@@ -127,6 +132,7 @@ latest_history="$(find "${ROOT}/history/conversation" -name '*.up.sql' | sed 's|
 psql_db chk_migrate <<< "update history_conversation_schema_migrations set version = ${latest_history}, dirty = false"
 
 if ./scripts/migrate.sh all all down >/dev/null 2>&1 && [[ "$(tables_of chk_migrate)" == "0" ]]; then pass "migrate: down leaves no table"; else fail "migrate: down"; fi
+if [[ "$(psql_db chk_migrate <<< "select (select count(*) from pg_publication) + (select count(*) from information_schema.schemata where schema_name in ('event_store', 'history', 'camel_history'))")" == "0" ]]; then pass "migrate: down also drops the publication and the three schemas"; else fail "migrate: down left the publication or a schema"; fi
 
 echo
 if [[ ${failures} -eq 0 ]]; then echo "All migration checks passed."; else echo "${failures} check(s) failed."; exit 1; fi

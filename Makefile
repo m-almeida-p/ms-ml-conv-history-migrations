@@ -2,6 +2,8 @@
 # This repo is the single place for them: migrations/<service>/<flow>/, one folder per
 # owning service and per flow. A new flow is a new folder.
 #
+#   migrations/agent/conversation/          schema event_store: conversation_events (the append-only log),
+#                                           its trigger and the publication Debezium reads   (ms-ml-genai-agents-bs)
 #   migrations/history/conversation/        schema history: conversation_inbox, conversation_messages,
 #                                           conversation_summaries, the view conversation_flow_segments
 #   migrations/history/camel_conversation/  schema camel_history: the same three tables, and the two maps
@@ -11,12 +13,12 @@
 # creates its schema; every later one qualifies its names with it.
 #
 # Each folder records its version in its own table, <service>_<flow>_schema_migrations,
-# so they evolve apart in one database. SERVICE (history, the default) and FLOW (conversation,
-# camel_conversation; default all) pick folders.
+# so they evolve apart in one database. SERVICE (agent, history) and FLOW (conversation,
+# camel_conversation) pick folders; both default to all.
 # No environment file is read: the target defaults to the shared cluster's Postgres
 # and is overridden on the command line, `make migrations/up MIGRATIONS_DB_DSN=postgres://...`.
 
-SERVICE ?= history
+SERVICE ?= all
 FLOW ?= all
 MIGRATIONS_ROOT ?= ./migrations
 ifeq ($(strip $(MIGRATIONS_DB_DSN)),)
@@ -55,13 +57,13 @@ migrations/debug:
 	@echo "MIGRATIONS_ROOT:   $(MIGRATIONS_ROOT)"
 	@echo "MIGRATIONS_DB_DSN: $(MASKED_DSN)"
 
-## migrations/up: apply every pending migration (flows in name order)
+## migrations/up: apply every pending migration (agent first, then history; flows in name order)
 .PHONY: migrations/up
 migrations/up: migrations/check
 	@echo "Applying migrations to $(MASKED_DSN)"
 	@$(RUN_MIGRATE) up
 
-## migrations/down: revert the selected migrations (drops their tables); needs CONFIRM=yes
+## migrations/down: revert the selected migrations (drops their tables, history first); needs CONFIRM=yes
 .PHONY: migrations/down
 migrations/down: migrations/check
 	@test "$(CONFIRM)" = "yes" || { echo "This drops the tables of SERVICE=$(SERVICE) FLOW=$(FLOW) with all their rows. Re-run with CONFIRM=yes"; exit 1; }
@@ -89,7 +91,7 @@ migrations/version: migrations/check
 migrations/test: migrations/check
 	@./scripts/check-migrations.sh
 
-## migrations/new: create the next numbered migration, SERVICE=history FLOW=<flow> NAME=<snake_case>
+## migrations/new: create the next numbered migration, SERVICE=<agent|history> FLOW=<flow> NAME=<snake_case>
 .PHONY: migrations/new
 migrations/new: migrations/check
 	@test -n "$(NAME)" || { echo "Error: set NAME=<snake_case_name>"; exit 1; }
