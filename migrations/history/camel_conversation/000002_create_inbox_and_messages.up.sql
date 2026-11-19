@@ -1,15 +1,10 @@
--- Camel conversation history, part 1: the schema, the inbox and the chat read model.
+-- Camel conversation history, part 2: the inbox and the chat read model, in the schema camel_history (created by 000001).
 -- Every statement is IF NOT EXISTS, so running it over existing tables is safe.
 --
--- Same tables as history/conversation (000001), in a schema of their own. They are filled by the Camel
+-- Same tables as history/conversation (000002), in a schema of their own. They are filled by the Camel
 -- Karavan consumer (ms-ml-camel-conv-history-bs), which reads the same topic as ms-ml-conv-history-bs. The
 -- separate schema keeps the two consumers' rows apart, so their results can be compared and neither
 -- writes into the other's tables. Every name is qualified, because migrate runs with the default search_path.
-CREATE SCHEMA IF NOT EXISTS camel_history;
-
-COMMENT ON SCHEMA camel_history IS
-    'Conversation history written by the Camel Karavan consumer (ms-ml-camel-conv-history-bs). Same tables as public.conversation_*, kept apart from the Go consumer''s.';
-
 -- The inbox keeps every conversation_events row that reaches this service, before
 -- and whether or not it becomes a chat message. It is the source a rebuild replays.
 CREATE TABLE IF NOT EXISTS camel_history.conversation_inbox (

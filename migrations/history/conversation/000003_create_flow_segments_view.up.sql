@@ -1,5 +1,5 @@
--- Conversation history, part 2: a conversation cut into segments of a flow.
--- Every statement is repeatable, so running it over an existing view is safe.
+-- Conversation history, part 3: a conversation cut into segments of a flow.
+-- Every name is qualified with the schema history (created by 000001). Every statement is repeatable, so running it over an existing view is safe.
 --
 -- The inbox stamps each fact with the flow that was active when it arrived. That
 -- leaves two messages at the edge of a flow on the wrong side of it: the user
@@ -32,7 +32,7 @@
 -- so a filter on conversation_id reaches the inbox's primary key and one
 -- conversation reads only its own rows. The first step is NOT MATERIALIZED for the
 -- same reason: it is read twice, and a materialized copy would be built whole.
-CREATE OR REPLACE VIEW conversation_flow_segments AS
+CREATE OR REPLACE VIEW history.conversation_flow_segments AS
 WITH events AS NOT MATERIALIZED (
     SELECT conversation_id, sequence, event_name, flow, occurred_at,
            payload ->> 'confirmation_ref' AS ref,
@@ -43,7 +43,7 @@ WITH events AS NOT MATERIALIZED (
                                    'GuardrailResponseSent', 'AgentResponseFailed') THEN 'conversation'
                ELSE 'fact'
            END AS kind
-    FROM conversation_inbox
+    FROM history.conversation_inbox
 ),
 -- Counting the facts from each row to the end of the conversation gives a user
 -- message and the fact that handled it the same number, so the pair shares a group.
@@ -128,15 +128,15 @@ SELECT conversation_id, segment::int AS segment, flow, from_sequence, to_sequenc
        END AS outcome
 FROM segments;
 
-COMMENT ON VIEW conversation_flow_segments IS
+COMMENT ON VIEW history.conversation_flow_segments IS
     'A conversation cut into segments of a flow, one row per segment, read from conversation_inbox. A user message belongs to the flow that handled it, the conversation''s own facts never split a segment, and a segment ends at its resolution. See the comment at the top of the migration for the rules.';
-COMMENT ON COLUMN conversation_flow_segments.conversation_id IS 'The conversation.';
-COMMENT ON COLUMN conversation_flow_segments.segment IS 'Position of the segment in the conversation, from 1.';
-COMMENT ON COLUMN conversation_flow_segments.flow IS 'The flow of the segment, such as p2p, or NULL for a segment outside any flow.';
-COMMENT ON COLUMN conversation_flow_segments.from_sequence IS 'Sequence of the first fact of the segment.';
-COMMENT ON COLUMN conversation_flow_segments.to_sequence IS 'Sequence of the last fact of the segment.';
-COMMENT ON COLUMN conversation_flow_segments.events IS 'How many facts the segment holds.';
-COMMENT ON COLUMN conversation_flow_segments.started_at IS 'When the first fact of the segment happened.';
-COMMENT ON COLUMN conversation_flow_segments.ended_at IS 'When the last fact of the segment happened.';
-COMMENT ON COLUMN conversation_flow_segments.confirmation_ref IS 'Reference of the card the segment offered, from its payment facts, or NULL.';
-COMMENT ON COLUMN conversation_flow_segments.outcome IS 'approved, rejected or failed from the resolution; abandoned, expired or open for a card never resolved; none for a segment that offered no card.';
+COMMENT ON COLUMN history.conversation_flow_segments.conversation_id IS 'The conversation.';
+COMMENT ON COLUMN history.conversation_flow_segments.segment IS 'Position of the segment in the conversation, from 1.';
+COMMENT ON COLUMN history.conversation_flow_segments.flow IS 'The flow of the segment, such as p2p, or NULL for a segment outside any flow.';
+COMMENT ON COLUMN history.conversation_flow_segments.from_sequence IS 'Sequence of the first fact of the segment.';
+COMMENT ON COLUMN history.conversation_flow_segments.to_sequence IS 'Sequence of the last fact of the segment.';
+COMMENT ON COLUMN history.conversation_flow_segments.events IS 'How many facts the segment holds.';
+COMMENT ON COLUMN history.conversation_flow_segments.started_at IS 'When the first fact of the segment happened.';
+COMMENT ON COLUMN history.conversation_flow_segments.ended_at IS 'When the last fact of the segment happened.';
+COMMENT ON COLUMN history.conversation_flow_segments.confirmation_ref IS 'Reference of the card the segment offered, from its payment facts, or NULL.';
+COMMENT ON COLUMN history.conversation_flow_segments.outcome IS 'approved, rejected or failed from the resolution; abandoned, expired or open for a card never resolved; none for a segment that offered no card.';

@@ -6,10 +6,15 @@ The database migrations of the conversation history. The SQL here is the definit
 
 ## Where these came from
 
-They were copied, unchanged, from `ml-genai-agents-bs-testing` (`migrations/history/`), where the conversation tables used to live
-together with the agent's `conversation_events`. That repo keeps the agent's migrations (`migrations/agent/`); the history ones now
-have their own repo, so a change to the history tables does not need the producer's repo. The SQL is byte-identical to the source. The
-runner (`Makefile`, `scripts/`) is the same one, reduced to the `history` service.
+They were copied from `ml-genai-agents-bs-testing` (`migrations/history/`), where the conversation tables used to live together with the
+agent's `conversation_events`. That repo keeps the agent's migrations (`migrations/agent/`); the history ones now have their own repo, so a
+change to the history tables does not need the producer's repo. The runner (`Makefile`, `scripts/`) is the same one, reduced to the
+`history` service.
+
+**One change from the copy: nothing lives in `public` any more.** Each folder now starts with a `000001_create_schema` migration, and every
+later migration qualifies its names with that schema (the originals created their tables in `public`). The tables, columns, indexes and
+the view are otherwise the same SQL. Because the numbering and the location changed, **these migrations must be applied to a database
+that does not have the old tables**: see [An existing database](#an-existing-database).
 
 Nothing was removed from the source repo. The history folders there are now duplicates: delete them there when this repo is the one the
 services use, so there is one place for them.
@@ -20,13 +25,25 @@ services use, so there is one place for them.
 lists the folders. Every folder numbers its files from `000001` and records its applied version in `<service>_<flow>_schema_migrations`,
 so the folders evolve apart in the same database.
 
-| Folder | Tables | Service | Version table |
-|---|---|---|---|
-| `migrations/history/conversation/` | `conversation_inbox`, `conversation_messages`, `conversation_summaries`, the view `conversation_flow_segments`, in the schema `public` | `ms-ml-conv-history-bs` (the Go service) | `history_conversation_schema_migrations` |
-| `migrations/history/camel_conversation/` | the same three tables in the schema `camel_history`, and the two maps to Microsoft Foundry (`foundry_conversation_map`, `foundry_item_map`) | `ms-ml-camel-conv-history-bs`, `ms-ml-conv-history-consumer` | `history_camel_conversation_schema_migrations` |
+| Folder | Schema | Objects | Used by | Version table |
+|---|---|---|---|---|
+| `migrations/history/conversation/` | `history` | `conversation_inbox`, `conversation_messages`, `conversation_summaries`, the view `conversation_flow_segments` | `ms-ml-conv-history-bs` (the Go service) | `history_conversation_schema_migrations` |
+| `migrations/history/camel_conversation/` | `camel_history` | the same three tables, and the two maps to Microsoft Foundry (`foundry_conversation_map`, `foundry_item_map`) | `ms-ml-camel-conv-history-bs` | `history_camel_conversation_schema_migrations` |
 
-The folder and table names are the ones the cluster already records (`history_conversation` at version 3, `history_camel_conversation`
-at version 4, checked), so running `up` from here on that database changes nothing.
+The tables have the same names in both schemas: the schema tells them apart (`history.conversation_inbox`,
+`camel_history.conversation_inbox`), so no table name carries a prefix. Each folder's first migration creates its schema, and `down`
+drops it last (without `CASCADE`, so it fails instead of deleting anything that was put in it).
+
+**The version tables stay in `public`.** `migrate` creates them before it runs the first migration, when the folder's schema does not
+exist yet, so they cannot live in it. They are the only objects in `public`; `make migrations/test` checks that nothing else is.
+
+## An existing database
+
+The shared cluster's Postgres still has the **old layout**: the three tables and the view in `public`, the schema `camel_history` with
+the earlier numbering, and the two version tables at versions 3 and 4. Running `up` on it would not create the new schemas (the
+version tables say the work is done), or would fail half way. **Recreate first**: drop the old tables, the view, the schema
+`camel_history` and the two version tables, then `make migrations/up`. That deletes the rows, so it is done by the owner, not by a
+script here.
 
 ## Run
 
@@ -60,8 +77,8 @@ make migrations/test                 # the idempotency check, on a throwaway Pos
 On a throwaway Postgres in Docker (the cluster is not touched). For each folder: a second `up` fails nothing and leaves the schema
 identical (tables, columns, constraints, indexes, comments); `down` runs twice and leaves no table; `up` after `down` gives the same
 schema. Through `migrate`: a second `up` says `no change`; `up` over existing tables without version tables changes nothing; a recorded
-version above the latest migration is reset without touching the tables; a dirty version is not reset silently. A new folder is covered
-without editing the script. Last run: all 21 checks passed.
+version above the latest migration is reset without touching the tables; a dirty version is not reset silently. After `up`, nothing exists in `public` but the version tables,
+and both schemas exist. A new folder is covered without editing the script. Last run: all 24 checks passed.
 
 ## Adding a table
 

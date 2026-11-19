@@ -1,7 +1,7 @@
 -- Camel conversation history, part 2: one row per conversation of an account, for the conversation list.
 -- Every statement is repeatable, so running it over an existing table is safe.
 --
--- Same table as history/conversation (000003), in the camel_history schema (created by 000001).
+-- Same table as history/conversation (000004), in the camel_history schema (created by 000001).
 --
 -- The list of an account's conversations needs, for each one, how many messages it has and when its
 -- first and last message were. Grouping conversation_messages answers that, but it reads every

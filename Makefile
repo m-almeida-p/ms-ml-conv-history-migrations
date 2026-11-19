@@ -2,10 +2,13 @@
 # This repo is the single place for them: migrations/<service>/<flow>/, one folder per
 # owning service and per flow. A new flow is a new folder.
 #
-#   migrations/history/conversation/        conversation_inbox, conversation_messages, conversation_summaries,
-#                                           the view conversation_flow_segments            (ms-ml-conv-history-bs, schema public)
-#   migrations/history/camel_conversation/  the same three tables in the schema camel_history, and the two
-#                                           maps to Microsoft Foundry                      (ms-ml-camel-conv-history-bs)
+#   migrations/history/conversation/        schema history: conversation_inbox, conversation_messages,
+#                                           conversation_summaries, the view conversation_flow_segments
+#   migrations/history/camel_conversation/  schema camel_history: the same three tables, and the two maps
+#                                           to Microsoft Foundry
+#
+# Nothing is created in public except golang-migrate's own version tables. The first migration of each folder
+# creates its schema; every later one qualifies its names with it.
 #
 # Each folder records its version in its own table, <service>_<flow>_schema_migrations,
 # so they evolve apart in one database. SERVICE (history, the default) and FLOW (conversation,

@@ -91,6 +91,15 @@ export MIGRATIONS_DB_DSN="postgres://postgres:x@127.0.0.1:${port}/chk_migrate?ss
 
 ./scripts/migrate.sh all all up >/dev/null 2>&1 && pass "migrate: up" || fail "migrate: up"
 all_first="$(dump_schema chk_migrate)"
+# Nothing may be created in public but migrate's own version tables: every table and view lives in the schema of its folder.
+if [[ "$(psql_db chk_migrate <<< "select count(*) from information_schema.tables where table_schema = 'public' and table_name not like '%schema_migrations'")" == "0" ]]; then
+  pass "migrate: no table or view is created in public (only the version tables)"
+else
+  fail "migrate: something was created in public"
+fi
+for schema in history camel_history; do
+  if [[ "$(psql_db chk_migrate <<< "select count(*) from information_schema.schemata where schema_name = '${schema}'")" == "1" ]]; then pass "migrate: schema ${schema} exists after up"; else fail "migrate: schema ${schema} is missing after up"; fi
+done
 second="$(./scripts/migrate.sh all all up 2>&1 || true)"
 if [[ "$(grep -c 'no change' <<< "${second}")" -eq "$(find "${ROOT}" -mindepth 2 -maxdepth 2 -type d | wc -l | tr -d ' ')" ]]; then
   pass "migrate: second up says no change in every folder"
