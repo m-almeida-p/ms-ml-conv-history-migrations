@@ -97,7 +97,7 @@ if [[ "$(psql_db chk_migrate <<< "select count(*) from information_schema.tables
 else
   fail "migrate: something was created in public"
 fi
-for schema in event_store history camel_history dead_letter; do
+for schema in event_store history camel_history dead_letter web_ui; do
   if [[ "$(psql_db chk_migrate <<< "select count(*) from information_schema.schemata where schema_name = '${schema}'")" == "1" ]]; then pass "migrate: schema ${schema} exists after up"; else fail "migrate: schema ${schema} is missing after up"; fi
 done
 second="$(./scripts/migrate.sh all all up 2>&1 || true)"
@@ -143,6 +143,29 @@ dl_ok "a record with a NUL and bytes that are not UTF-8 is accepted" \
   "insert into dead_letter.dead_letters (service, source_topic, source_partition, source_offset, reason, record_key, record_value, headers, field, detail, exception_class, attempt, source_timestamp) values ('svc-a', 'topic-1', 1, 20, 'store-rejected', '\\x7b226b223a317d'::bytea, '\\x0000000002007bff0a80'::bytea, '{\"h\":\"v\"}', 'sqlstate-22021', 'the store refuses the data for good', null, 3, now())"
 if [[ "$(dl "select encode(record_value, 'hex') || ',' || encode(record_key, 'hex') || ',' || (headers ->> 'h') from dead_letter.dead_letters where source_offset = 20")" == "0000000002007bff0a80,7b226b223a317d,v" ]]; then pass "dead_letter: key, value and headers come back byte for byte"; else fail "dead_letter: the record did not come back as it went in"; fi
 
+# The Agent Web UI's tables: what the web UI relies on when it signs people in and keeps their chats.
+wu() { psql_db chk_migrate <<< "$1" 2>/dev/null; }
+wu_ok() { if wu "$2" >/dev/null; then pass "web_ui: $1"; else fail "web_ui: $1"; fi; }
+wu_refused() { if wu "$2" >/dev/null; then fail "web_ui: $1 was accepted"; else pass "web_ui: $1"; fi; }
+wu_ok "a user, a session, a conversation and its first message are accepted" \
+  "insert into web_ui.users (id, email, password_hash) values ('00000000-0000-0000-0000-000000000001', 'a@example.com', 'hash');
+   insert into web_ui.sessions (id, user_id, expires_at) values ('s1', '00000000-0000-0000-0000-000000000001', now() + interval '1 day');
+   insert into web_ui.conversations (id, user_id, title) values ('00000000-0000-0000-0000-0000000000c1', '00000000-0000-0000-0000-000000000001', 'First');
+   insert into web_ui.messages (id, conversation_id, seq, role, status) values ('00000000-0000-0000-0000-0000000000a1', '00000000-0000-0000-0000-0000000000c1', 1, 'user', 'complete')"
+wu_refused "an email with capital letters" \
+  "insert into web_ui.users (id, email, password_hash) values ('00000000-0000-0000-0000-000000000002', 'B@Example.com', 'hash')"
+wu_refused "the same email twice" \
+  "insert into web_ui.users (id, email, password_hash) values ('00000000-0000-0000-0000-000000000003', 'a@example.com', 'hash')"
+wu_refused "an empty password hash" \
+  "insert into web_ui.users (id, email, password_hash) values ('00000000-0000-0000-0000-000000000004', 'c@example.com', '')"
+wu_refused "a conversation title of 121 characters" \
+  "insert into web_ui.conversations (id, user_id, title) values ('00000000-0000-0000-0000-0000000000c2', '00000000-0000-0000-0000-000000000001', repeat('x', 121))"
+wu_refused "a message with an unknown status" \
+  "insert into web_ui.messages (id, conversation_id, seq, role, status) values ('00000000-0000-0000-0000-0000000000a2', '00000000-0000-0000-0000-0000000000c1', 2, 'assistant', 'done')"
+wu_refused "a second message at the same position of a conversation" \
+  "insert into web_ui.messages (id, conversation_id, seq, role, status) values ('00000000-0000-0000-0000-0000000000a3', '00000000-0000-0000-0000-0000000000c1', 1, 'assistant', 'complete')"
+if [[ "$(wu "delete from web_ui.users where id = '00000000-0000-0000-0000-000000000001'; select (select count(*) from web_ui.sessions) + (select count(*) from web_ui.conversations) + (select count(*) from web_ui.messages)")" == "0" ]]; then pass "web_ui: deleting a user removes its sessions, conversations and messages"; else fail "web_ui: deleting a user left rows behind"; fi
+
 # A database can record a version above the folder's latest migration (a migration
 # that no longer exists was applied). up must reset it to the latest instead of
 # stopping with "no migration found for version N", and must not touch the tables.
@@ -159,7 +182,7 @@ latest_history="$(find "${ROOT}/history/conversation" -name '*.up.sql' | sed 's|
 psql_db chk_migrate <<< "update history_conversation_schema_migrations set version = ${latest_history}, dirty = false"
 
 if ./scripts/migrate.sh all all down >/dev/null 2>&1 && [[ "$(tables_of chk_migrate)" == "0" ]]; then pass "migrate: down leaves no table"; else fail "migrate: down"; fi
-if [[ "$(psql_db chk_migrate <<< "select (select count(*) from pg_publication) + (select count(*) from information_schema.schemata where schema_name in ('event_store', 'history', 'camel_history', 'dead_letter'))")" == "0" ]]; then pass "migrate: down also drops the publication and the four schemas"; else fail "migrate: down left the publication or a schema"; fi
+if [[ "$(psql_db chk_migrate <<< "select (select count(*) from pg_publication) + (select count(*) from information_schema.schemata where schema_name in ('event_store', 'history', 'camel_history', 'dead_letter', 'web_ui'))")" == "0" ]]; then pass "migrate: down also drops the publication and the five schemas"; else fail "migrate: down left the publication or a schema"; fi
 
 echo
 if [[ ${failures} -eq 0 ]]; then echo "All migration checks passed."; else echo "${failures} check(s) failed."; exit 1; fi

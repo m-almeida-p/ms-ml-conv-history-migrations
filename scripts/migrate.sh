@@ -20,7 +20,8 @@ DSN="${MIGRATIONS_DB_DSN:-postgres://postgres@localhost:5432/postgres?sslmode=di
 MIGRATE="${MIGRATE:-migrate}"
 
 # Order matters for up: the event store (agent) first, then the history built from it, then what every consumer shares.
-SERVICES=(agent history shared)
+# web_ui (the Agent Web UI) depends on none of them, so it goes last.
+SERVICES=(agent history shared web_ui)
 
 die() { echo "Error: $*" >&2; exit 1; }
 

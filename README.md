@@ -1,7 +1,7 @@
 # ms-ml-conv-history-migrations
 
 The database migrations of the conversation pipeline: the agent's event store, the publication Debezium reads, and the history tables built
-from it. The SQL here is the definition of the schemas: the services that use the tables (`ms-ml-genai-agents-bs`,
+from it; and the tables of the Agent Web UI (`inside-agent-web-ui`), which does not create its own. The SQL here is the definition of the schemas: the services that use the tables (`ms-ml-genai-agents-bs`,
 `ms-ml-conv-history-bs`, `ms-ml-camel-conv-history-bs`, `ms-ml-conv-history-consumer`) do not create them. They are applied with
 [golang-migrate](https://github.com/golang-migrate/migrate).
 
@@ -31,6 +31,7 @@ so the folders evolve apart in the same database.
 | `migrations/history/conversation/` | `history` | `conversation_inbox`, `conversation_messages`, `conversation_summaries`, the view `conversation_flow_segments` | `ms-ml-conv-history-bs` (the Go service) | `history_conversation_schema_migrations` |
 | `migrations/history/camel_conversation/` | `camel_history` | the same three tables, and the two maps to Microsoft Foundry (`foundry_conversation_map`, `foundry_item_map`) | `ms-ml-camel-conv-history-bs` | `history_camel_conversation_schema_migrations` |
 | `migrations/shared/dead_letter/` | `dead_letter` | `dead_letters`: the records every consumer refused for good, kept as received | every consumer (see [Dead letters](#dead-letters)) | `shared_dead_letter_schema_migrations` |
+| `migrations/web_ui/chat/` | `web_ui` | `users`, `sessions`, `conversations`, `messages`: who signs in to the Agent Web UI and the chats they keep | `inside-agent-web-ui` (it connects with `search_path=web_ui`) | `web_ui_chat_schema_migrations` |
 
 The tables have the same names in both schemas: the schema tells them apart (`history.conversation_inbox`,
 `camel_history.conversation_inbox`), so no table name carries a prefix. Each folder's first migration creates its schema, and `down`

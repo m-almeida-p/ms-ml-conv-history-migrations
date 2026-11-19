@@ -9,13 +9,14 @@
 #   migrations/history/camel_conversation/  schema camel_history: the same three tables, and the two maps
 #                                           to Microsoft Foundry
 #   migrations/shared/dead_letter/          schema dead_letter: dead_letters, the records every consumer refused for good
+#   migrations/web_ui/chat/                 schema web_ui: users, sessions, conversations and messages of the Agent Web UI
 #
 # Nothing is created in public except golang-migrate's own version tables. The first migration of each folder
 # creates its schema; every later one qualifies its names with it.
 #
 # Each folder records its version in its own table, <service>_<flow>_schema_migrations,
-# so they evolve apart in one database. SERVICE (agent, history, shared) and FLOW (conversation,
-# camel_conversation) pick folders; both default to all.
+# so they evolve apart in one database. SERVICE (agent, history, shared, web_ui) and FLOW (conversation,
+# camel_conversation, dead_letter, chat) pick folders; both default to all.
 # No environment file is read: the target defaults to the shared cluster's Postgres
 # and is overridden on the command line, `make migrations/up MIGRATIONS_DB_DSN=postgres://...`.
 
