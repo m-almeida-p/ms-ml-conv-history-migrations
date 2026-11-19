@@ -6,4 +6,4 @@
 CREATE SCHEMA IF NOT EXISTS web_ui;
 
 COMMENT ON SCHEMA web_ui IS
-    'Agent Web UI (inside-agent-web-ui): its users, sessions and chat conversations with the messages of each.';
+    'iApe-UI (the Agent Web UI): its users, sessions and chat conversations with the messages of each.';
